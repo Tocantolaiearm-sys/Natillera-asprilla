@@ -408,6 +408,18 @@ async function syncFromSheets() {
   }
 }
 
+
+function limpiarNumeroColombiano(texto){
+  if(!texto) return 0;
+  return parseFloat(
+    texto.toString()
+      .replace(/\$/g,'')
+      .replace(/\s/g,'')
+      .replace(/\./g,'')
+      .replace(/,/g,'.')
+  ) || 0;
+}
+
 function parseCSV(text) {
   const lines = text.trim().split('\n').map(l=>l.split(',').map(c=>c.replace(/^"|"$/g,'').trim()));
   if(lines.length < 3) return [];
@@ -444,8 +456,8 @@ function parseCSV(text) {
     const modalidad=(row[iAhorro]||'').trim();
     const libreta=(row[iLib]||'').trim();
     const telefono=(row[iTel]||'').replace(/[^0-9]/g,'');
-    const total=parseFloat((row[iTotal]||'0').replace(/[^0-9.-]/g,''))||0;
-    const prestRaw=parseFloat((row[iPrest]||'0').replace(/[^0-9.-]/g,''))||0;
+    const total=limpiarNumeroColombiano(row[iTotal]);
+    const prestRaw=limpiarNumeroColombiano(row[iPrest]);
     const prestamo=prestRaw<0?Math.abs(prestRaw):0;
 
     if(!socios[cc]) socios[cc]={cc,nombre,modalidad,libreta,telefono,ahorros:0,actividades:0,prestamo:0,pagos:[]};
@@ -456,7 +468,7 @@ function parseCSV(text) {
 
     iMeses.forEach((im,idx)=>{
       if(im<0) return;
-      const val=parseFloat((row[im]||'0').replace(/[^0-9.-]/g,''))||0;
+      const val=limpiarNumeroColombiano(row[im]);
       if(val===0) return;
       const fi=iFechas[idx]||0;
       const fecha=(row[fi]||'').trim();
