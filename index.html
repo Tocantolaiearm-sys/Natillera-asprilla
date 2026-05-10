@@ -291,84 +291,109 @@ function parseCSVLine(line) {
   return result;
 }
 
+function parseNum(str) {
+  if(!str) return 0;
+  str = str.toString().trim();
+  const neg = str.includes('-');
+  let s = '';
+  for(let i=0;i<str.length;i++) {
+    if(str[i]>='0'&&str[i]<='9') s+=str[i];
+    else if(str[i]==='.') s+=str[i];
+  }
+  s = s.replace(/\./g,'');
+  const n = parseFloat(s)||0;
+  return neg ? -n : n;
+}
+
+function esFecha(str) {
+  if(!str) return false;
+  return /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str) && !str.startsWith('00/') && !str.includes('1900');
+}
+
 function parseCSV(text) {
   const lines = text.trim().split('\n').map(l => parseCSVLine(l));
   if(lines.length < 3) return [];
 
-  // Fila 1 (índice 1) tiene los headers
-  let headerIdx = -1;
+  let hi = -1;
   for(let i=0;i<Math.min(5,lines.length);i++) {
-    if(lines[i].some(c=>c.includes('CATEGORIA')||c.includes('SOCIO'))) { headerIdx=i; break; }
+    if(lines[i].some(c=>c.includes('CATEGORIA'))) { hi=i; break; }
   }
-  if(headerIdx < 0) return [];
+  if(hi < 0) return [];
 
-  const headers = lines[headerIdx];
-  const gi = name => headers.findIndex(h=>h.includes(name));
+  // Estructura verificada del CSV (indices fijos):
+  // [1]=CATEGORIA [2]=SOCIO [3]=CC [4]=#LIB [5]=TELEFONO
+  // [6]=AHORRO(modalidad) [7]=FECHA(num cuota)
+  // [8]=fecha1  [9]=valor1(enero)
+  // [10]=fecha2 [11]=valor2(febrero)
+  // [12]=fecha3 [13]=valor3(marzo)
+  // [14]=fecha4 [15]=valor4(abril)
+  // [16]=fecha5 [17]=valor5(mayo)
+  // [18]=fecha6 [19]=valor6(junio)
+  // [20]=fecha7 [21]=valor7(julio)
+  // [22]=fecha8 [23]=valor8(agosto)
+  // [24]=fecha9 [25]=valor9(sep)
+  // [26]=fecha10 [27]=valor10(oct)
+  // [28]=fecha11 [29]=valor11(nov)
+  // [30] = TOTAL REAL del ahorro por fila (header dice PRESTAMO)
+  // [31] = PRESTAMO REAL - SOLO negativo si hay prestamo (header dice #CUOTAS)
 
-  const iCat=gi('CATEGORIA'), iNom=gi('SOCIO'), iCC=gi('CC');
-  const iLib=gi('LIB'), iTel=gi('TELEFONO'), iMod=gi('AHORRO');
-  const iCuotas=gi('CUOTAS'), iTotal=gi('TOTAL'), iPrest=gi('PRESTAMO');
-
-  // Columnas de meses y fechas (intercaladas: FECHA, MES, FECHA2, MES2...)
-  // Estructura: FECHA, ENERO, FECHA 2, FEBRERO, FECHA 3, MARZO...
-  const mesesNombres = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE'];
-  const iMeses = mesesNombres.map(m => headers.findIndex(h=>h.trim()===m||h.trim()===m+' '));
-  // Las fechas están en la columna ANTES de cada mes
-  const iFechas = iMeses.map(im => im > 0 ? im-1 : -1);
+  const PARES = [
+    {fi:8, vi:9, mes:'ENERO'},{fi:10,vi:11,mes:'FEBRERO'},
+    {fi:12,vi:13,mes:'MARZO'},{fi:14,vi:15,mes:'ABRIL'},
+    {fi:16,vi:17,mes:'MAYO'},{fi:18,vi:19,mes:'JUNIO'},
+    {fi:20,vi:21,mes:'JULIO'},{fi:22,vi:23,mes:'AGOSTO'},
+    {fi:24,vi:25,mes:'SEPTIEMBRE'},{fi:26,vi:27,mes:'OCTUBRE'},
+    {fi:28,vi:29,mes:'NOVIEMBRE'}
+  ];
 
   const socios = {};
 
-  for(let r=headerIdx+1; r<lines.length; r++) {
+  for(let r=hi+1; r<lines.length; r++) {
     const row = lines[r];
-    if(!row[iCC]) continue;
-    const cc = row[iCC].replace(/[^0-9]/g,'');
-    if(!cc || cc==='') continue;
+    if(!row[3]) continue;
+    const cc = row[3].replace(/[^0-9]/g,'');
+    if(!cc) continue;
 
-    const categoria = (row[iCat]||'').trim();
-    const nombre = (row[iNom]||'').trim();
+    const categoria = (row[1]||'').trim();
+    const nombre = (row[2]||'').trim();
     if(!nombre) continue;
 
-    const modalidad = (row[iMod]||'').trim();
-    const libreta = (row[iLib]||'').trim();
-    const telefono = (row[iTel]||'').replace(/[^0-9]/g,'');
-    const cuotaNum = parseInt(row[iCuotas])||1;
+    const modalidad = (row[6]||'').trim();
+    const libreta = (row[4]||'').trim();
+    const telefono = (row[5]||'').replace(/[^0-9]/g,'');
+    const cuotaStr = (row[7]||'').trim();
+    const cuotaNum = /^\d+$/.test(cuotaStr) ? parseInt(cuotaStr) : 1;
 
-    // Préstamo: viene negativo en la columna PRESTAMO
-    const prestRaw = parseNum(row[iPrest]||'0');
-    const prestamo = prestRaw < 0 ? Math.abs(prestRaw) : 0;
+    // PRESTAMO: col 31, SOLO es prestamo si viene NEGATIVO (con signo -)
+    const prestStr = row.length > 31 ? (row[31]||'') : '';
+    const prestamo = prestStr.includes('-') ? Math.abs(parseNum(prestStr)) : 0;
 
-    if(!socios[cc]) socios[cc] = {cc,nombre,modalidad,libreta,telefono,ahorros:0,actividades:0,prestamo:0,pagos:[]};
+    if(!socios[cc]) socios[cc]={cc,nombre,modalidad,libreta,telefono,ahorros:0,actividades:0,prestamo:0,pagos:[]};
     const s = socios[cc];
-
-    // Actualizar préstamo (el mayor valor encontrado)
     if(prestamo > s.prestamo) s.prestamo = prestamo;
 
-    // Categoría Prestamos (cuota 4): solo registra el préstamo, no suma ahorros
+    // Filas Prestamos: solo actualizan el prestamo, no suman totales
     if(categoria === 'Prestamos') continue;
 
-    // TOTAL de la columna (ya calculado en el Excel)
-    const total = parseNum(row[iTotal]||'0');
+    // TOTAL de la fila: col 30
+    const total = parseNum(row.length > 30 ? (row[30]||'0') : '0');
 
-    // Registrar pagos por mes
-    iMeses.forEach((im, idx) => {
-      if(im < 0 || im >= row.length) return;
-      const val = parseNum(row[im]||'0');
+    // Registrar pagos del mes
+    PARES.forEach(function(p) {
+      if(p.vi >= row.length) return;
+      const val = parseNum(row[p.vi]||'0');
       if(val <= 0) return;
-      // Fecha: columna anterior al mes
-      const fi = iFechas[idx];
-      let fecha = fi >= 0 && fi < row.length ? (row[fi]||'').trim() : '';
-      // Filtrar fechas inválidas como "00/01/1900"
-      if(fecha.startsWith('00/') || fecha.includes('1900')) fecha = '';
-      const tipo = categoria.includes('Ahorro') ? 'Ahorro' : 'Actividad';
-      s.pagos.push({mes:mesesNombres[idx], tipo, cuota:cuotaNum, valor:val, fecha});
+      const fechaRaw = p.fi < row.length ? (row[p.fi]||'').trim() : '';
+      const fecha = esFecha(fechaRaw) ? fechaRaw : '';
+      const tipo = categoria.indexOf('Ahorro') >= 0 ? 'Ahorro' : 'Actividad';
+      s.pagos.push({mes:p.mes, tipo:tipo, cuota:cuotaNum, valor:val, fecha:fecha});
     });
 
-    // Sumar total
-    if(categoria.includes('Ahorro')) s.ahorros += total;
+    if(categoria.indexOf('Ahorro') >= 0) s.ahorros += total;
     else s.actividades += total;
   }
 
-  return Object.values(socios).filter(s=>s.nombre);
+  return Object.values(socios).filter(function(s){ return s.nombre; });
 }
 
 // ── SYNC ──
