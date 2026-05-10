@@ -422,7 +422,43 @@ function limpiarNumeroColombiano(texto){
 }
 
 function parseCSV(text) {
-  const lines = text.trim().split('\n').map(l=>l.split(',').map(c=>c.replace(/^"|"$/g,'').trim()));
+
+  function csvToArray(str) {
+    const rows = [];
+    let row = [];
+    let current = '';
+    let inside = false;
+
+    for (let i = 0; i < str.length; i++) {
+      const c = str[i];
+
+      if (c === '"') {
+        inside = !inside;
+      } else if (c === ',' && !inside) {
+        row.push(current.trim());
+        current = '';
+      } else if ((c === '\n' || c === '\r') && !inside) {
+        if (current || row.length) {
+          row.push(current.trim());
+          rows.push(row);
+          row = [];
+          current = '';
+        }
+      } else {
+        current += c;
+      }
+    }
+
+    if (current || row.length) {
+      row.push(current.trim());
+      rows.push(row);
+    }
+
+    return rows.map(r => r.map(c => c.replace(/^"|"$/g,'')));
+  }
+
+  const lines = csvToArray(text);
+
   if(lines.length < 3) return [];
   
   // Find header row (row with CATEGORIA, SOCIO, CC)
@@ -480,7 +516,7 @@ function parseCSV(text) {
   return Object.values(socios).filter(s=>s.nombre);
 }
 
-// Auto sync cada 10 minutos
+// Auto sync cada 5 minutos
 function startSync() {
   document.getElementById('sync-bar').style.display='flex';
   syncFromSheets();
