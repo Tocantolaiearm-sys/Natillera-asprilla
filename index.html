@@ -387,7 +387,7 @@ async function syncFromSheets() {
   const timeEl = document.getElementById('sync-time');
   dot.className='sync-dot syncing'; msg.textContent='Sincronizando datos...';
   try {
-    const res = await fetch(CSV_URL + '&t=' + Date.now());
+    const res = await fetch(CSV_URL + '&v=' + VERSION + '&t=' + Date.now());
     if(!res.ok) throw new Error('Error ' + res.status);
     const text = await res.text();
     const parsed = parseCSV(text);
@@ -395,7 +395,11 @@ async function syncFromSheets() {
       SOCIOS = parsed;
       lastSync = new Date();
       dot.className='sync-dot ok'; msg.textContent='Datos actualizados';
-      timeEl.textContent='Última sync: ' + lastSync.toLocaleTimeString('es-CO');
+      timeEl.textContent='Última actualización: ' + lastSync.toLocaleTimeString('es-CO');
+      const footer=document.getElementById('update-footer');
+      if(footer){
+        footer.innerHTML='✅ Última actualización: ' + lastSync.toLocaleTimeString('es-CO');
+      }
       if(currentUser?.tipo==='admin') { renderStats(); renderTable(); renderPrestamos(); }
       if(currentUser?.tipo==='socio') {
         const s=SOCIOS.find(x=>x.cc===currentUser.socio.cc);
@@ -789,5 +793,22 @@ function closeModal(){ document.getElementById('modal').style.display='none'; }
 function closeModalOut(e){ if(e.target===document.getElementById('modal')) closeModal(); }
 document.addEventListener('keydown',e=>{ if(e.key==='Enter'){ if(document.getElementById('tab-admin').style.display!=='none') loginAdmin(); else loginSocio(); } });
 </script>
+
+
+<div id="update-footer" style="
+position:fixed;
+bottom:10px;
+left:50%;
+transform:translateX(-50%);
+background:rgba(0,0,0,0.75);
+color:white;
+padding:8px 14px;
+border-radius:12px;
+font-size:12px;
+z-index:9999;
+backdrop-filter:blur(8px);
+">
+⏳ Esperando sincronización...
+</div>
 
 </body></html>
