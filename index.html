@@ -420,48 +420,374 @@ function limpiarNumeroColombiano(texto){
   ) || 0;
 }
 
+
 function parseCSV(text) {
-  const lines = text.trim().split('\n').map(l =>
-    l.split(',').map(c => c.replace(/^"|"$/g, '').trim())
-  );
 
-  if (lines.length < 3) return {};
+  function splitCSVLine(line) {
+    const result = [];
+    let current = '';
+    let insideQuotes = false;
 
-  const headerIdx = lines.findIndex(row =>
-    row.some(c => c.includes('CATEGORIA') || c.includes('SOCIO'))
-  );
-  if (headerIdx < 0) return {};
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
 
-  const headers = lines[headerIdx];
-  const getCol = name => headers.findIndex(h => h.includes(name));
+      if (char === '"') {
+        insideQuotes = !insideQuotes;
+        continue;
+      }
 
+      if (char === ',' && !insideQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    result.push(current.trim());
+    return result;
+  }
+
+  const lines = text.trim().split('\\n').map(splitCSVLine);
+
+  if(lines.length < 3) return [];
+
+  let headerIdx = -1;
+
+  for(let i = 0; i < Math.min(5, lines.length); i++) {
+    if(lines[i].some(c =>
+      c.includes('CATEGORIA') ||
+      c.includes('SOCIO') ||
+      c.includes('CC')
+    )) {
+      headerIdx = i;
+      break;
+    }
+  }
+
+  if(headerIdx < 0) return [];
+
+  const headers = lines[headerIdx].map(h => h.trim());
+
+  const getCol = name =>
+    headers.findIndex(h =>
+      h.toUpperCase().includes(name.toUpperCase())
+    );
+
+  const iCat = getCol('CATEGORIA');
   const iNom = getCol('SOCIO');
+  const iCC = getCol('CC');
+  const iLib = getCol('LIB');
+  const iTel = getCol('TELEFONO');
   const iAhorro = getCol('AHORRO');
   const iCuotas = getCol('CUOTAS');
-  const iRifas = getCol('RIFAS');
-  const iPagos = getCol('PAGOS');
+  const iTotal = getCol('TOTAL');
+  const iPrest = getCol('PRESTAMO');
 
   const socios = {};
 
-  for (let r = headerIdx + 1; r < lines.length; r++) {
+  for(let r = headerIdx + 1; r < lines.length; r++) {
+
     const row = lines[r];
-    const nombre = row[iNom];
 
-    if (!nombre) continue;
+    if(!row[iCC] || row[iCC] === 'CC') continue;
 
-    const ahorro = limpiarNumeroColombiano(row[iAhorro]);
-    const cuotas = limpiarNumeroColombiano(row[iCuotas]);
-    const rifas = limpiarNumeroColombiano(row[iRifas]);
-    const pagos = limpiarNumeroColombiano(row[iPagos]);
+    const cc = (row[iCC] || '').replace(/[^0-9]/g,'');
 
-    socios[nombre] = {
-      ahorro,
-      cuotas,
-      rifas,
-      pagos,
-      total: ahorro + cuotas + rifas
-    };
+    if(!cc) continue;
+
+    const nombre = (row[iNom] || '').trim();
+    const categoria = (row[iCat] || '').trim();
+    const modalidad = (row[iAhorro] || '').trim();
+    const libreta = (row[iLib] || '').trim();
+    const telefono = (row[iTel] || '').replace(/[^0-9]/g,'');
+
+    const total = limpiarNumeroColombiano(row[iTotal]);
+    const prestamoRaw = limpiarNumeroColombiano(row[iPrest]);
+
+    const prestamo = prestamoRaw < 0
+      ? Math.abs(prestamoRaw)
+      : 0;
+
+    if(!socios[cc]) {
+      socios[cc] = {
+        cc,
+        nombre,
+        modalidad,
+        libreta,
+        telefono,
+        ahorros: 0,
+        actividades: 0,
+        prestamo: 0,
+        pagos: []
+      };
+    }
+
+    const s = socios[cc];
+
+    if(prestamo > s.prestamo)
+      s.prestamo = prestamo;
+
+    if(categoria.includes('Ahorro'))
+      s.ahorros += total;
+    else
+      s.actividades += total;
   }
 
-  return socios;
+  return Object.values(socios);
 }
+
+
+// ── LOGIN ──
+function setTab(t){
+  document.querySelectorAll('.login-tab').forEach((b,i)=>b.classList.toggle('active',(i===0&&t==='socio')||(i===1&&t==='admin')));
+  document.getElementById('tab-socio').style.display=t==='socio'?'':'none';
+  document.getElementById('tab-admin').style.display=t==='admin'?'':'none';
+  document.getElementById('login-err').style.display='none';
+}
+
+function loginAdmin(){
+  if(document.getElementById('admin-pass').value===ADMIN_PASS) startSession({tipo:'admin'});
+  else document.getElementById('login-err').style.display='block';
+}
+
+function loginSocio(){
+  const cc=document.getElementById('socio-cc').value.trim();
+  const pass=document.getElementById('socio-pass').value.trim();
+  const s=SOCIOS.find(x=>x.cc===cc);
+  if(s&&pass===cc) startSession({tipo:'socio',socio:s});
+  else document.getElementById('login-err').style.display='block';
+}
+
+function startSession(user){
+  currentUser=user;
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='block';
+  const pill=document.getElementById('topbar-user');
+  if(user.tipo==='admin'){
+    pill.textContent='Administrador';
+    document.getElementById('badge-admin').style.display='inline-block';
+    document.getElementById('admin-view').style.display='block';
+    document.getElementById('socio-view').style.display='none';
+    renderStats(); renderTable(); renderPrestamos();
+  } else {
+    pill.textContent=user.socio.nombre.split(' ')[0];
+    document.getElementById('badge-admin').style.display='none';
+    document.getElementById('admin-view').style.display='none';
+    document.getElementById('socio-view').style.display='block';
+    renderSocioView(user.socio);
+  }
+  startSync();
+}
+
+function logout(){
+  currentUser=null;
+  document.getElementById('login-screen').style.display='flex';
+  document.getElementById('app').style.display='none';
+  document.getElementById('sync-bar').style.display='none';
+  document.getElementById('login-err').style.display='none';
+  ['admin-pass','socio-cc','socio-pass'].forEach(id=>document.getElementById(id).value='');
+}
+
+// ── SECTION TABS ──
+function setSection(sec,btn){
+  document.querySelectorAll('.section-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('section-ahorros').style.display=sec==='ahorros'?'':'none';
+  document.getElementById('section-prestamos').style.display=sec==='prestamos'?'':'none';
+}
+
+// ── ADMIN STATS ──
+function renderStats(){
+  const totalAhorro=SOCIOS.reduce((a,s)=>a+s.ahorros,0);
+  const totalAct=SOCIOS.reduce((a,s)=>a+s.actividades,0);
+  const totalPrestamo=SOCIOS.reduce((a,s)=>a+s.prestamo,0);
+  const numPrestamos=SOCIOS.filter(s=>s.prestamo>0).length;
+  const quinc=SOCIOS.filter(s=>s.modalidad.includes('Quincenal')).length;
+  const mens=SOCIOS.filter(s=>s.modalidad.includes('Mensual')).length;
+  document.getElementById('stats-grid').innerHTML=`
+    <div class="stat-card miel" style="animation-delay:.00s"><div class="stat-icon">💰</div><div class="stat-value">${fmt(totalAhorro)}</div><div class="stat-label">Total en ahorros</div></div>
+    <div class="stat-card miel" style="animation-delay:.07s"><div class="stat-icon">🎯</div><div class="stat-value">${fmt(totalAct)}</div><div class="stat-label">Total en actividades</div></div>
+    <div class="stat-card rojo" style="animation-delay:.14s"><div class="stat-icon">💳</div><div class="stat-value">${fmt(totalPrestamo)}</div><div class="stat-label">Total préstamos · ${numPrestamos} socios</div></div>
+    <div class="stat-card blanco" style="animation-delay:.21s"><div class="stat-icon">👥</div><div class="stat-value">${SOCIOS.length}</div><div class="stat-label">Socias/os activos</div></div>
+    <div class="stat-card verde" style="animation-delay:.28s"><div class="stat-icon">📅</div><div class="stat-value">${quinc}Q / ${mens}M</div><div class="stat-label">Quincenal / Mensual</div></div>
+  `;
+}
+
+// ── PRESTAMOS TABLE ──
+function renderPrestamos(){
+  const conPrestamo=SOCIOS.filter(s=>s.prestamo>0).sort((a,b)=>b.prestamo-a.prestamo);
+  const total=conPrestamo.reduce((a,s)=>a+s.prestamo,0);
+  document.getElementById('prestamo-resumen').textContent=`${conPrestamo.length} socios · Total: ${fmt(total)}`;
+  const tbody=document.getElementById('prestamos-tbody');
+  if(!conPrestamo.length){
+    tbody.innerHTML='<tr><td colspan="4"><div class="empty-msg">No hay préstamos registrados</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML=conPrestamo.map(s=>`
+    <tr onclick="openViewModal('${s.cc}')" style="cursor:pointer">
+      <td><div class="prestamo-nombre">${s.nombre}</div><div class="prestamo-cc">CC: ${s.cc} · Tel: ${s.telefono}</div></td>
+      <td style="color:var(--gris);font-size:13px">📓 ${s.libreta}</td>
+      <td><span class="tag ${s.modalidad.includes('Quincenal')?'quincenal':'mensual'}">${s.modalidad}</span></td>
+      <td style="text-align:right"><span class="amount-rojo">${fmt(s.prestamo)}</span></td>
+    </tr>`).join('');
+}
+
+// ── AHORROS TABLE ──
+function setFilter(f,btn){
+  activeFilter=f;
+  document.querySelectorAll('.filter-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active'); renderTable();
+}
+
+function renderTable(){
+  const q=(document.getElementById('search-input')?.value||'').toLowerCase();
+  let filtered=SOCIOS.filter(s=>s.nombre.toLowerCase().includes(q));
+  if(activeFilter!=='todos') filtered=filtered.filter(s=>s.modalidad.includes(activeFilter));
+  const tbody=document.getElementById('socios-tbody');
+  if(!filtered.length){ tbody.innerHTML='<tr><td colspan="6"><div class="empty-msg">🔍 No se encontraron resultados</div></td></tr>'; return; }
+  tbody.innerHTML=filtered.map(s=>`
+    <tr onclick="openViewModal('${s.cc}')">
+      <td><div class="socio-name">${s.nombre}</div><div class="socio-sub">CC: ${s.cc} · Tel: ${s.telefono}</div></td>
+      <td><span class="amount-verde">${fmt(s.ahorros)}</span></td>
+      <td><span class="amount-miel">${fmt(s.actividades)}</span></td>
+      <td><span class="tag ${s.modalidad.includes('Quincenal')?'quincenal':'mensual'}">${s.modalidad}</span></td>
+      <td style="color:var(--gris);font-size:13px">📓 ${s.libreta}</td>
+      <td><button class="btn-edit" onclick="event.stopPropagation();openEditModal('${s.cc}')">Editar</button></td>
+    </tr>`).join('');
+}
+
+// ── MODALS ──
+function pagosFila(p){
+  const cls=p.tipo==='Ahorro'?'tipo-ahorro':'tipo-actividad';
+  const valCls=p.tipo==='Ahorro'?'valor-ahorro':'valor-actividad';
+  return `<tr><td style="color:var(--gris)">${p.fecha||'—'}</td><td><span class="${cls}">${p.tipo}</span></td><td style="color:var(--gris)">Cuota ${p.cuota}</td><td class="valor-cell ${valCls}">${fmt(p.valor)}</td></tr>`;
+}
+
+function openViewModal(cc){
+  const s=SOCIOS.find(x=>x.cc===cc);
+  const filas=s.pagos.length?s.pagos.map(pagosFila).join(''):'<tr><td colspan="4" style="color:var(--gris);text-align:center;padding:16px">Sin pagos registrados</td></tr>';
+  showModal(`
+    <h2>${s.nombre}</h2>
+    <p class="modal-sub">CC: ${s.cc} · Tel: ${s.telefono} · Libreta #${s.libreta}</p>
+    <div class="detail-section">
+      <h3>Resumen financiero</h3>
+      <div class="detail-row"><span class="lbl">Modalidad</span><span class="val">${s.modalidad}</span></div>
+      <div class="detail-row"><span class="lbl">Total ahorros</span><span class="val verde">${fmt(s.ahorros)}</span></div>
+      <div class="detail-row"><span class="lbl">Total actividades</span><span class="val miel">${fmt(s.actividades)}</span></div>
+      <div class="detail-row"><span class="lbl">Total acumulado</span><span class="val">${fmt(s.ahorros+s.actividades)}</span></div>
+      ${s.prestamo>0?`<div class="detail-row"><span class="lbl">Préstamo</span><span class="val rojo">${fmt(s.prestamo)}</span></div>`:''}
+    </div>
+    <div class="detail-section">
+      <h3>Historial de pagos (${s.pagos.length})</h3>
+      <div class="pagos-table-wrap"><table class="pagos-table">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Cuota</th><th style="text-align:right">Valor</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-save" onclick="openEditModal('${s.cc}');closeModal()">✏️ Editar</button>
+      <button class="btn-cancel" onclick="closeModal()">Cerrar</button>
+    </div>`);
+}
+
+function openEditModal(cc){
+  const s=SOCIOS.find(x=>x.cc===cc);
+  const idx=SOCIOS.indexOf(s);
+  showModal(`
+    <h2>Editar socio/a</h2><p class="modal-sub">${s.nombre}</p>
+    <div class="modal-grid">
+      <div class="form-group" style="grid-column:1/-1"><label>Nombre completo</label><input id="e-nombre" value="${s.nombre}"></div>
+      <div class="form-group"><label>Total ahorros</label><input type="number" id="e-ahorros" value="${s.ahorros}"></div>
+      <div class="form-group"><label>Total actividades</label><input type="number" id="e-actividades" value="${s.actividades}"></div>
+      <div class="form-group"><label>Préstamo</label><input type="number" id="e-prestamo" value="${s.prestamo}"></div>
+      <div class="form-group"><label>Modalidad</label><select id="e-modalidad"><option ${s.modalidad.includes('Quincenal')?'selected':''}>Quincenal</option><option ${s.modalidad.includes('Mensual')?'selected':''}>Mensual</option></select></div>
+      <div class="form-group"><label># Libreta</label><input id="e-libreta" value="${s.libreta}"></div>
+      <div class="form-group"><label>Teléfono</label><input id="e-telefono" value="${s.telefono}"></div>
+    </div>
+    <div style="margin-top:18px">
+      <h3 style="font-size:11px;color:rgba(212,150,58,0.6);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px;border-bottom:1px solid rgba(212,150,58,0.1);padding-bottom:6px">➕ Agregar pago</h3>
+      <div class="modal-grid">
+        <div class="form-group"><label>Tipo</label><select id="np-tipo"><option>Ahorro</option><option>Actividad</option></select></div>
+        <div class="form-group"><label>Cuota #</label><select id="np-cuota"><option>1</option><option>2</option><option>3</option></select></div>
+        <div class="form-group"><label>Valor</label><input type="number" id="np-valor" placeholder="Ej: 50000"></div>
+        <div class="form-group"><label>Fecha (dd/mm/aaaa)</label><input id="np-fecha" placeholder="Ej: 15/05/2026"></div>
+        <div class="form-group"><label>Mes</label><select id="np-mes">${['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE'].map(m=>`<option>${m}</option>`).join('')}</select></div>
+      </div>
+      <button class="btn-save" style="width:auto;padding:9px 18px;font-size:13px" onclick="addPago(${idx})">+ Agregar pago</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-save" onclick="saveEdit(${idx})">💾 Guardar</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancelar</button>
+    </div>`);
+}
+
+function addPago(idx){
+  const s=SOCIOS[idx];
+  const val=parseFloat(document.getElementById('np-valor').value);
+  if(!val||val<=0){ alert('Ingresa un valor válido'); return; }
+  const pago={tipo:document.getElementById('np-tipo').value,cuota:parseInt(document.getElementById('np-cuota').value),valor:val,fecha:document.getElementById('np-fecha').value,mes:document.getElementById('np-mes').value};
+  s.pagos.push(pago);
+  if(pago.tipo==='Ahorro') s.ahorros+=val; else s.actividades+=val;
+  document.getElementById('np-valor').value=''; document.getElementById('np-fecha').value='';
+  alert('✅ Pago agregado'); renderStats(); renderTable(); renderPrestamos();
+}
+
+function saveEdit(idx){
+  const s=SOCIOS[idx];
+  s.nombre=document.getElementById('e-nombre').value||s.nombre;
+  s.ahorros=parseFloat(document.getElementById('e-ahorros').value)||0;
+  s.actividades=parseFloat(document.getElementById('e-actividades').value)||0;
+  s.prestamo=parseFloat(document.getElementById('e-prestamo').value)||0;
+  s.modalidad=document.getElementById('e-modalidad').value;
+  s.libreta=document.getElementById('e-libreta').value;
+  s.telefono=document.getElementById('e-telefono').value;
+  closeModal(); renderStats(); renderTable(); renderPrestamos();
+}
+
+// ── SOCIO VIEW ──
+function renderSocioView(s){
+  const ahorroCuota1=s.pagos.filter(p=>p.tipo==='Ahorro'&&p.cuota===1).reduce((a,p)=>a+p.valor,0);
+  const ahorroCuota2=s.pagos.filter(p=>p.tipo==='Ahorro'&&p.cuota===2).reduce((a,p)=>a+p.valor,0);
+  const pagosAct=s.pagos.filter(p=>p.tipo==='Actividad');
+  const filas=s.pagos.length?s.pagos.map(pagosFila).join(''):'<tr><td colspan="4" style="color:var(--gris);text-align:center;padding:20px">Sin pagos registrados aún</td></tr>';
+  document.getElementById('socio-view').innerHTML=`
+    <div class="hero-card">
+      <div class="hero-greeting">¡Hola! 🐷</div>
+      <div class="hero-name">${s.nombre}</div>
+      <div class="hero-libreta">Libreta #${s.libreta} · ${s.modalidad} · CC ${s.cc}</div>
+      <div class="hero-amount-label">Total ahorrado</div>
+      <div class="hero-amount">${fmt(s.ahorros)}</div>
+      <div class="hero-sub">Solo tus ahorros (sin actividades)</div>
+    </div>
+    <div class="socio-cards">
+      <div class="info-card">
+        <h3>💰 Mis ahorros</h3>
+        <div class="detail-row"><span class="lbl">Cuota 1</span><span class="val verde">${fmt(ahorroCuota1)}</span></div>
+        <div class="detail-row"><span class="lbl">Cuota 2</span><span class="val verde">${fmt(ahorroCuota2)}</span></div>
+        <div class="detail-row" style="padding-top:12px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.06)"><span class="lbl" style="font-weight:600">Total ahorros</span><span class="val verde" style="font-size:17px">${fmt(s.ahorros)}</span></div>
+        ${s.prestamo>0?`<div class="detail-row"><span class="lbl">Préstamo</span><span class="val rojo">${fmt(s.prestamo)}</span></div>`:''}
+      </div>
+      <div class="info-card">
+        <h3>🎯 Actividades</h3>
+        <div class="detail-row"><span class="lbl">Rifas y más</span><span class="val miel">${fmt(s.actividades)}</span></div>
+        <div class="detail-row"><span class="lbl">Pagos registrados</span><span class="val">${pagosAct.length}</span></div>
+        <div class="detail-row" style="padding-top:12px;margin-top:4px;border-top:1px solid rgba(255,255,255,0.06)"><span class="lbl" style="font-weight:600">Total actividades</span><span class="val miel" style="font-size:17px">${fmt(s.actividades)}</span></div>
+      </div>
+    </div>
+    <div class="info-card" style="animation-delay:.2s">
+      <h3>📋 Historial de pagos</h3>
+      <div class="pagos-table-wrap"><table class="pagos-table" style="margin-top:10px">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Cuota</th><th style="text-align:right">Valor</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function showModal(html){ document.getElementById('modal-content').innerHTML=html; document.getElementById('modal').style.display='flex'; }
+function closeModal(){ document.getElementById('modal').style.display='none'; }
+function closeModalOut(e){ if(e.target===document.getElementById('modal')) closeModal(); }
+document.addEventListener('keydown',e=>{ if(e.key==='Enter'){ if(document.getElementById('tab-admin').style.display!=='none') loginAdmin(); else loginSocio(); } });
+</script>
+
+</body></html>
